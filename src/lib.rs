@@ -75,33 +75,38 @@ pub fn mesh(voxels: &[u16], mesh_data: &mut MeshData, transparents: BTreeSet<u16
 
     // Hidden face culling
     for a in 1..(cs_p - 1) {
-        let a_cs_p = a * cs_p;
-
         for b in 1..(cs_p - 1) {
-            let ab = (a_cs_p + b) * cs_p;
             let ba_index = (b - 1) + (a - 1) * cs;
             let ab_index = (a - 1) + (b - 1) * cs;
 
             for c in 1..(cs_p - 1) {
-                let abc = ab + c;
+                let abc = a + b * cs_p + c * cs_p * cs_p;
                 let v1 = voxels[abc];
                 if v1 == 0 {
                     continue;
                 }
-                mesh_data.face_masks[ba_index] |=
-                    face_value(v1, voxels[abc + cs_p2], &transparents) << (c - 1);
+
+                let check_neighbor = |dx: isize, dy: isize, dz: isize| -> u16 {
+                    let nx = (a as isize + dx).clamp(0, cs_p as isize - 1) as usize;
+                    let ny = (b as isize + dy).clamp(0, cs_p as isize - 1) as usize;
+                    let nz = (c as isize + dz).clamp(0, cs_p as isize - 1) as usize;
+                    voxels[nx + ny * cs_p + nz * cs_p * cs_p]
+                };
+
+                mesh_data.face_masks[ba_index + 0 * cs_2] |=
+                    face_value(v1, check_neighbor(0, 0, 1), &transparents) << (c - 1);
                 mesh_data.face_masks[ba_index + 1 * cs_2] |=
-                    face_value(v1, voxels[abc - cs_p2], &transparents) << (c - 1);
+                    face_value(v1, check_neighbor(0, 0, -1), &transparents) << (c - 1);
 
                 mesh_data.face_masks[ab_index + 2 * cs_2] |=
-                    face_value(v1, voxels[abc + cs_p], &transparents) << (c - 1);
+                    face_value(v1, check_neighbor(0, 1, 0), &transparents) << (c - 1);
                 mesh_data.face_masks[ab_index + 3 * cs_2] |=
-                    face_value(v1, voxels[abc - cs_p], &transparents) << (c - 1);
+                    face_value(v1, check_neighbor(0, -1, 0), &transparents) << (c - 1);
 
                 mesh_data.face_masks[ba_index + 4 * cs_2] |=
-                    face_value(v1, voxels[abc + 1], &transparents) << c;
+                    face_value(v1, check_neighbor(1, 0, 0), &transparents) << c;
                 mesh_data.face_masks[ba_index + 5 * cs_2] |=
-                    face_value(v1, voxels[abc - 1], &transparents) << c;
+                    face_value(v1, check_neighbor(-1, 0, 0), &transparents) << c;
             }
         }
     }
