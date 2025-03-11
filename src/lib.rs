@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate alloc;
 
-mod face;
+pub mod face;
 
 use alloc::{boxed::Box, collections::btree_set::BTreeSet, vec::Vec};
 pub use face::*;
@@ -102,8 +102,16 @@ fn calculate_ao(voxels: &[u16], x: usize, y: usize, z: usize) -> u8 {
         _ => 0,
     }
 }
+
+#[inline]
 fn get_ao(masks: &[u64], index: usize, pos: usize) -> u8 {
     let mask_index = index + (pos / 32);
+
+    // Check if mask_index is within bounds
+    if mask_index >= masks.len() {
+        return 0; // Default AO value when out of bounds
+    }
+
     let bit_pos = (pos % 32) * 2;
     ((masks[mask_index] >> bit_pos) & 3) as u8
 }
@@ -124,22 +132,30 @@ pub fn mesh(voxels: &[u16], mesh_data: &mut MeshData, transparents: BTreeSet<u16
                 if v1 == 0 {
                     continue;
                 }
-                for face in 0..6 {
-                    let face_value = face_value(
-                        v1,
-                        voxels[(abc as isize + FACE_OFFSETS[face]) as usize],
-                        &transparents,
-                    );
-                    let ao_value = calculate_ao(voxels, a, b, c);
-                    let mask_index = if face < 4 {
-                        (if face % 2 == 0 { ba_index } else { ab_index }) + face * CS_2
-                    } else {
-                        ba_index + face * CS_2
-                    };
-                    let shift = if face < 4 { c - 1 } else { c };
-                    mesh_data.face_masks[mask_index] |= face_value << shift;
-                    mesh_data.ao_masks[mask_index] |= (ao_value as u64) << ((shift % 32) * 2);
-                }
+                mesh_data.face_masks[ba_index] |=
+                    face_value(v1, voxels[abc + CS_P2], &transparents) << (c - 1);
+                mesh_data.face_masks[ba_index + CS_2] |=
+                    face_value(v1, voxels[abc - CS_P2], &transparents) << (c - 1);
+
+                mesh_data.face_masks[ab_index + 2 * CS_2] |=
+                    face_value(v1, voxels[abc + CS_P], &transparents) << (c - 1);
+                mesh_data.face_masks[ab_index + 3 * CS_2] |=
+                    face_value(v1, voxels[abc - CS_P], &transparents) << (c - 1);
+
+                mesh_data.face_masks[ba_index + 4 * CS_2] |=
+                    face_value(v1, voxels[abc + 1], &transparents) << c;
+                mesh_data.face_masks[ba_index + 5 * CS_2] |=
+                    face_value(v1, voxels[abc - 1], &transparents) << c;
+
+                let ao_value = calculate_ao(voxels, a, b, c);
+                // Add AO values for each face with appropriate shifts
+                mesh_data.ao_masks[ba_index] |= (ao_value as u64) << ((c - 1) % 32 * 2); // Face 0
+                mesh_data.ao_masks[ba_index + CS_2] |= (ao_value as u64) << ((c - 1) % 32 * 2); // Face 1
+                mesh_data.ao_masks[ab_index + 2 * CS_2] |= (ao_value as u64) << ((c - 1) % 32 * 2); // Face 2
+                mesh_data.ao_masks[ab_index + 3 * CS_2] |= (ao_value as u64) << ((c - 1) % 32 * 2); // Face 3
+                mesh_data.ao_masks[ba_index + 4 * CS_2] |= (ao_value as u64) << (c % 32 * 2); // Face 4
+                mesh_data.ao_masks[ba_index + 5 * CS_2] |= (ao_value as u64) << (c % 32 * 2);
+                // Face 5
             }
         }
     }
@@ -286,6 +302,26 @@ pub fn mesh(voxels: &[u16], mesh_data: &mut MeshData, transparents: BTreeSet<u16
 
                     bits_here &= !(1 << bit_pos);
 
+                    // Early continue if bit_pos is 0 since we can't have bit_pos - 1
+                    if bit_pos == 0 {
+                        // Handle the special case for bit_pos = 0
+                        let v_type = voxels[get_axis_index(axis, right + 1, forward + 1, bit_pos)];
+                        let ao = (mesh_data.ao_masks[right + bits_location] & 3) as u8;
+
+                        // Create a quad without merging since we can't access bit_pos - 1
+                        let quad = get_quad(
+                            right,
+                            forward,
+                            bit_pos + (!face & 1),
+                            1,
+                            1,
+                            v_type as usize,
+                            ao,
+                        );
+                        mesh_data.quads[face].push(quad);
+                        continue;
+                    }
+
                     let v_type = voxels[get_axis_index(axis, right + 1, forward + 1, bit_pos)];
                     let forward_merge_i = right_cs + (bit_pos - 1);
                     let right_merged_ref = &mut mesh_data.right_merged[bit_pos - 1];
@@ -293,9 +329,8 @@ pub fn mesh(voxels: &[u16], mesh_data: &mut MeshData, transparents: BTreeSet<u16
                     if *right_merged_ref == 0
                         && (bits_forward >> bit_pos & 1) != 0
                         && v_type == voxels[get_axis_index(axis, right + 1, forward + 2, bit_pos)]
-                        && (mesh_data.ao_masks[right + bits_location] >> (bit_pos * 2) & 3)
-                            == (mesh_data.ao_masks[right + bits_forward_location] >> (bit_pos * 2)
-                                & 3)
+                        && get_ao(&mesh_data.ao_masks, right + bits_location, bit_pos)
+                            == get_ao(&mesh_data.ao_masks, right + bits_forward_location, bit_pos)
                     {
                         mesh_data.forward_merged[forward_merge_i] += 1;
                         continue;
