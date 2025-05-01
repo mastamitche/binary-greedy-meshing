@@ -23,7 +23,7 @@ pub struct Quad {
     pub v_type: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MeshData {
     // Output
     pub quads: [Vec<Quad>; 6],
